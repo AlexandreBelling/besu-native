@@ -1,5 +1,5 @@
 /*
- * Copyright ConsenSys AG.
+ * Copyright Hyperledger Besu contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -16,45 +16,61 @@
 plugins {
     id 'java-library'
     id 'maven-publish'
-    id 'com.jfrog.artifactory' version '4.20.0'
+    id 'com.jfrog.artifactory' version '5.2.3'
 }
 
 dependencies {
+    implementation project(':common')
     implementation 'net.java.dev.jna:jna:5.12.1'
-
     testImplementation 'com.google.guava:guava:31.1-jre'
     testImplementation 'junit:junit:4.13.2'
-    testImplementation 'org.apache.tuweni:tuweni-bytes:2.2.0'
+    testImplementation 'io.consensys.tuweni:tuweni-bytes:2.7.1'
+    testImplementation 'io.consensys.tuweni:tuweni-units:2.7.1'
     testImplementation 'org.assertj:assertj-core:3.22.0'
+}
+
+// Ensure that the compileTestJava task depends on the macArmLibCopy task
+tasks.named('compileTestJava').configure {
+    dependsOn tasks.named('macArmLibCopy')
+    dependsOn tasks.named('macLibCopy')
+    dependsOn tasks.named('linuxLibCopy')
+    dependsOn tasks.named('linuxArm64LibCopy')
 }
 
 task macArmLibCopy(type: Copy) {
     from 'besu-native-ec/release/darwin-aarch64/libbesu_native_ec.dylib'
     from 'besu-native-ec/release/darwin-aarch64/libbesu_native_ec_crypto.dylib'
-    into 'build/resources/main/darwin-aarch64'
+    into 'build/resources/main/lib/aarch64'
 }
-jar.dependsOn macArmLibCopy
+processResources.dependsOn macArmLibCopy
 
 task macLibCopy(type: Copy) {
     from 'besu-native-ec/release/darwin-x86-64/libbesu_native_ec.dylib'
     from 'besu-native-ec/release/darwin-x86-64/libbesu_native_ec_crypto.dylib'
-    into 'build/resources/main/darwin-x86-64'
+    into 'build/resources/main/lib/x86-64'
 }
-jar.dependsOn macLibCopy
+processResources.dependsOn macLibCopy
 
 task linuxLibCopy(type: Copy) {
     from 'besu-native-ec/release/linux-gnu-x86_64/libbesu_native_ec.so'
     from 'besu-native-ec/release/linux-gnu-x86_64/libbesu_native_ec_crypto.so'
-    into 'build/resources/main/linux-x86-64'
+    into 'build/resources/main/lib/x86-64'
 }
-jar.dependsOn linuxLibCopy
+processResources.dependsOn linuxLibCopy
 
 task linuxArm64LibCopy(type: Copy) {
     from 'besu-native-ec/release/linux-gnu-aarch64/libbesu_native_ec.so'
     from 'besu-native-ec/release/linux-gnu-aarch64/libbesu_native_ec_crypto.so'
-    into 'build/resources/main/linux-aarch64'
+    into 'build/resources/main/lib/aarch64'
 }
-jar.dependsOn linuxArm64LibCopy
+processResources.dependsOn linuxArm64LibCopy
+
+task linuxRiscv64LibCopy(type: Copy) {
+    from 'besu-native-ec/release/linux-gnu-riscv64/libbesu_native_ec.so'
+    from 'besu-native-ec/release/linux-gnu-riscv64/libbesu_native_ec_crypto.so'
+    into 'build/resources/main/lib/riscv64'
+}
+processResources.dependsOn linuxRiscv64LibCopy
 
 jar {
     archiveBaseName = 'besu-native-secp256r1'
@@ -72,13 +88,13 @@ jar {
 
 task sourcesJar(type: Jar, dependsOn: classes) {
     archiveBaseName = 'besu-native-secp256r1'
-    classifier = 'sources'
+    archiveClassifier = 'sources'
     from sourceSets.main.allSource
 }
 
 task javadocJar(type: Jar, dependsOn: javadoc) {
     archiveBaseName = 'besu-native-secp256r1'
-    classifier = 'javadoc'
+    archiveClassifier = 'javadoc'
     from javadoc.destinationDir
 }
 

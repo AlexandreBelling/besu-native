@@ -1,3 +1,18 @@
+/*
+ * Copyright contributors to Besu.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+ * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations under the License.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ */
 package org.hyperledger.besu.nativelib.ipa_multipoint;
 
 import org.junit.jupiter.params.ParameterizedTest;
@@ -14,6 +29,7 @@ import org.hyperledger.besu.nativelib.ipamultipoint.LibIpaMultipoint;
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigInteger;
+import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -36,12 +52,12 @@ public class PedersenCommitmentTest {
     public void TestPolynomialCommitments(TestData testData) {
         List<Bytes> FrBytes = new ArrayList<>();
         for (int i = 0 ; i < 256; i++ ) {
-            BigInteger decimalBigInt = new BigInteger(testData.frs.get(i));
-            FrBytes.add(Bytes32.leftPad(Bytes.wrap(decimalBigInt.toByteArray())));
+            Bytes32 value = Bytes32.fromHexString(testData.frs.get(i));
+            FrBytes.add(value);
         }
         byte[] input = Bytes.concatenate(FrBytes).toArray();
-        BigInteger result = Bytes32.wrap(LibIpaMultipoint.commit(input)).toBigInteger();
-        BigInteger expected = new BigInteger(testData.commitment);
+        Bytes result = Bytes.wrap(LibIpaMultipoint.hash(LibIpaMultipoint.commit(input)));
+        Bytes expected = Bytes.fromHexString(testData.commitment);
         assertThat(result).isEqualTo(expected);
     }
 }

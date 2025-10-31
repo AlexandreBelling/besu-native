@@ -1,5 +1,5 @@
 /*
- * Copyright Besu Contributors
+ * Copyright contributors to Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -16,13 +16,15 @@
 plugins {
     id 'java-library'
     id 'maven-publish'
-    id 'com.jfrog.artifactory' version '4.20.0'
+    id 'com.jfrog.artifactory' version '5.2.3'
 }
 
 dependencies {
     implementation 'net.java.dev.jna:jna:5.12.1'
+    implementation project(':common')
+    testImplementation 'com.google.guava:guava:31.1-jre'
     testImplementation 'net.java.dev.jna:jna:5.12.1'
-    implementation 'org.apache.tuweni:tuweni-bytes:2.2.0'
+    testImplementation 'io.consensys.tuweni:tuweni-bytes:2.7.1'
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.assertj:assertj-core:3.22.0'
     testImplementation 'org.mockito:mockito-core:4.4.0'
@@ -30,27 +32,43 @@ dependencies {
 
 task macArmLibCopy(type: Copy) {
     from 'build/darwin-aarch64/lib/libgnark_jni.dylib'
-    into 'build/resources/main/darwin-aarch64'
+    from 'build/darwin-aarch64/lib/libgnark_eip_2537.dylib'
+    from 'build/darwin-aarch64/lib/libgnark_eip_196.dylib'
+    into 'build/resources/main/lib/aarch64'
 }
 processResources.dependsOn macArmLibCopy
 
 task macLibCopy(type: Copy) {
     from 'build/darwin-x86-64/lib/libgnark_jni.dylib'
-    into 'build/resources/main/darwin-x86-64'
+    from 'build/darwin-x86-64/lib/libgnark_eip_2537.dylib'
+    from 'build/darwin-x86-64/lib/libgnark_eip_196.dylib'
+    into 'build/resources/main/lib/x86-64'
 }
 processResources.dependsOn macLibCopy
 
 task linuxLibCopy(type: Copy) {
     from 'build/linux-gnu-x86_64/lib/libgnark_jni.so'
-    into 'build/resources/main/linux-x86-64'
+    from 'build/linux-gnu-x86_64/lib/libgnark_eip_2537.so'
+    from 'build/linux-gnu-x86_64/lib/libgnark_eip_196.so'
+    into 'build/resources/main/lib/x86-64'
 }
 processResources.dependsOn linuxLibCopy
 
 task linuxArm64LibCopy(type: Copy) {
     from 'build/linux-gnu-aarch64/lib/libgnark_jni.so'
-    into 'build/resources/main/linux-aarch64'
+    from 'build/linux-gnu-aarch64/lib/libgnark_eip_2537.so'
+    from 'build/linux-gnu-aarch64/lib/libgnark_eip_196.so'
+    into 'build/resources/main/lib/aarch64'
 }
 processResources.dependsOn linuxArm64LibCopy
+
+task linuxRiscv64LibCopy(type: Copy) {
+    from 'build/linux-gnu-riscv64/lib/libgnark_jni.so'
+    from 'build/linux-gnu-riscv64/lib/libgnark_eip_2537.so'
+    from 'build/linux-gnu-riscv64/lib/libgnark_eip_196.so'
+    into 'build/resources/main/lib/riscv64'
+}
+processResources.dependsOn linuxRiscv64LibCopy
 
 jar {
     archiveBaseName = 'besu-native-gnark'
@@ -68,13 +86,13 @@ jar {
 
 task sourcesJar(type: Jar, dependsOn: classes) {
     archiveBaseName = 'besu-native-gnark'
-    classifier = 'sources'
+    archiveClassifier = 'sources'
     from sourceSets.main.allSource
 }
 
 task javadocJar(type: Jar, dependsOn: javadoc) {
     archiveBaseName = 'besu-native-gnark'
-    classifier = 'javadoc'
+    archiveClassifier = 'javadoc'
     from javadoc.destinationDir
 }
 

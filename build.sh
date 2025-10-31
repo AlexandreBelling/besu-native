@@ -66,8 +66,8 @@ build_blake2bf() {
   #############################
 EOF
 
-  # This version of arm blake is actually slower than java blake on arm
-  if [[ "$OSARCH" == "linux-gnu-aarch64" ]];  then
+  # This version of arm blake is actually slower than java blake on arm, probably also on riscv64
+  if [[ "$OSARCH" == "linux-gnu-aarch64" || "$OSARCH" == "linux-gnu-riscv64" ]];  then
     return
     #cd "$SCRIPTDIR/blake2bf/arm64"
   else if [[ "$OSARCH" == "darwin-aarch64" ]];  then
@@ -111,30 +111,30 @@ EOF
     ./configure --prefix="$SCRIPTDIR/secp256k1/build/${OSARCH}" $SECP256K1_BUILD_OPTS && \
     make -j $CORE_COUNT && \
     make -j $CORE_COUNT install
-}
 
-build_altbn128() {
+  # Build the JNI ECRECOVER extension
   cat <<EOF
-  ############################
-  ###### build altbn128 ######
-  ############################
+  ####################################
+  ###### build secp256k1 JNI ########
+  ####################################
 EOF
 
-  echo "building altbn128 for ${OSARCH}"
-  cd "$SCRIPTDIR/altbn128/sputnikvm_altbn128"
-
-  # delete old build dir, if exists
-  rm -rf "$SCRIPTDIR/altbn128/build" || true
-  mkdir -p "$SCRIPTDIR/altbn128/build/${OSARCH}/lib"
-
-  cargo clean
-  if [[ "$OSTYPE" == "darwin"* ]];  then
-    lipo_lib "libeth_altbn128" ""
+  cd "$SCRIPTDIR/secp256k1/secp256k1_jni"
+  
+  # Ensure secp256k1 library is built first
+  export SECP256K1_LIB_PATH="$SCRIPTDIR/secp256k1/bitcoin-core-secp256k1"
+  
+  # Clean and build
+  make clean || true
+  make
+  
+  # Copy results to build directory
+  mkdir -p "$SCRIPTDIR/secp256k1/build/${OSARCH}/lib"
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    cp build/*/lib/libsecp256k1_ecrecover.dylib "$SCRIPTDIR/secp256k1/build/${OSARCH}/lib/"
   else
-    cargo build --lib --release
+    cp build/*/lib/libsecp256k1_ecrecover.so "$SCRIPTDIR/secp256k1/build/${OSARCH}/lib/"
   fi
-  mkdir -p "$SCRIPTDIR/altbn128/build/${OSARCH}/lib"
-  cp target/release/libeth_altbn128.* "$SCRIPTDIR/altbn128/build/${OSARCH}/lib"
 }
 
 build_arithmetic() {
@@ -195,31 +195,6 @@ EOF
 
   mkdir -p "$SCRIPTDIR/ipa-multipoint/build/${OSARCH}/lib"
   cp target/release/libipa_multipoint_jni.* "$SCRIPTDIR/ipa-multipoint/build/${OSARCH}/lib"
-}
-
-build_bls12_381() {
-  cat <<EOF
-  #############################
-  ###### build BLS12-381 ######
-  #############################
-EOF
-
-  echo "building bls12-381 for ${OSARCH}"
-  cd "$SCRIPTDIR/bls12-381/updated-eip1962"
-
-  # delete old build dir, if exists
-  rm -rf "$SCRIPTDIR/bls12-381/build" || true
-  mkdir -p "$SCRIPTDIR/bls12-381/build/${OSARCH}/lib"
-
-  cargo clean
-  if [[ "$OSTYPE" == "darwin"* ]];  then
-    lipo_lib "libeth_pairings" "--features eip_2357_c_api"
-  else
-      cargo build --lib --features eip_2357_c_api --release
-  fi
-  mkdir -p "$SCRIPTDIR/bls12-381/build/${OSARCH}/lib"
-  cp target/release/libeth_pairings.* "$SCRIPTDIR/bls12-381/build/${OSARCH}/lib"
-
 }
 
 build_jars(){
@@ -331,23 +306,115 @@ EOF
     LIBRARY_EXTENSION=so
   elif [[ "$OSTYPE" == "darwin"* ]]; then
     LIBRARY_EXTENSION=dylib
+    export GOROOT=$(brew --prefix go@1.24)/libexec
+    export PATH=$GOROOT/bin:$PATH
   fi
 
   go build -buildmode=c-shared -o libgnark_jni.$LIBRARY_EXTENSION gnark-jni.go
+  go build -buildmode=c-shared -o libgnark_eip_2537.$LIBRARY_EXTENSION gnark-eip-2537.go
+  go build -buildmode=c-shared -o libgnark_eip_196.$LIBRARY_EXTENSION gnark-eip-196.go
 
   mkdir -p "$SCRIPTDIR/gnark/build/${OSARCH}/lib"
   cp libgnark_jni.* "$SCRIPTDIR/gnark/build/${OSARCH}/lib"
+  cp libgnark_eip_2537.* "$SCRIPTDIR/gnark/build/${OSARCH}/lib"
+  cp libgnark_eip_196.* "$SCRIPTDIR/gnark/build/${OSARCH}/lib"
 }
+
+build_constantine() {
+  echo "#############################"
+  echo "####### build constantine ####"
+  echo "#############################"
+  
+  # don't try to build constantine on riscv64
+  if [[ "$OSARCH" == "linux-gnu-riscv64" ]];  then
+    return
+  fi
+
+
+  cd "$SCRIPTDIR/constantine/constantine"
+
+  # delete old build dir, if exists
+  rm -rf "$SCRIPTDIR/constantine/build" || true
+  mkdir -p "$SCRIPTDIR/constantine/build/${OSARCH}/lib"
+
+  # Check and modify config.nims if on x86_64
+  if [[ "$OSARCH" == "linux-gnu-x86_64" ]]; then
+    # Check if the config.nims already contains the necessary flags
+    if ! grep -q 'switch("passC", "-fPIC")' config.nims; then
+      {
+        echo 'when defined(linux):'
+        echo '  switch("passC", "-fPIC")'
+        echo '  switch("passL", "-fPIC")'
+      } >> config.nims
+    fi
+  fi
+
+  # Build the constantine library
+  export CTT_LTO=false
+  if [[ "$OSARCH" == "linux-gnu-aarch64" ]]; then
+    # Download and extract Nim
+    wget https://github.com/nim-lang/nightlies/releases/download/2025-02-14-version-2-2-6c34f62785263ad412f662f3e4e4bf8d8751d113/nim-2.2.2-linux_arm64.tar.xz
+    # verify download sha
+    echo "d983fadd58afd78b0dda5f690b03bf0ba2ee034e3476f4c62cbbe352ffc4656b nim-2.2.2-linux_arm64.tar.xz" | sha256sum -c || exit 1
+    tar -xf nim-2.2.2-linux_arm64.tar.xz
+    git config --global --add safe.directory /home/ubuntu/constantine/constantine
+    export PATH=$(pwd)/nim-2.2.2/bin:$PATH
+    # arm64 ASM is currently only for apple silicon processors, revisit in future releases of constantine:
+    export CTT_ASM=0
+    nimble make_lib
+  else
+    export PATH=$HOME/.nimble/bin:$PATH
+    nimble make_lib
+  fi
+
+  cd "$SCRIPTDIR/constantine/"
+
+  # Compile the native library
+ if [[ "$OSTYPE" == "darwin"* ]]; then
+   # link against the static libconstantine.a so we do not have to deal with multiple libraries in jni/jna:
+   clang -I"${JAVA_HOME}/include" -I"${JAVA_HOME}/include/darwin" -shared -o "$SCRIPTDIR/constantine/build/${OSARCH}/lib/libconstantinebindings.dylib" jna_ethereum_evm_precompiles.c -Iconstantine/include -I. constantine/lib/libconstantine.a
+ elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+   # link against the static libconstantine.a so we do not have to deal with multiple libraries in jni/jna:
+   gcc -I"${JAVA_HOME}/include" -I"${JAVA_HOME}/include/linux" -fPIC -shared -o "$SCRIPTDIR/constantine/build/${OSARCH}/lib/libconstantinebindings.so" jna_ethereum_evm_precompiles.c -Iconstantine/include -I. -Lconstantine/lib constantine/lib/libconstantine.a
+ else
+   echo "Unsupported OS/architecture: ${OSARCH}"
+   exit 1
+ fi
+}
+
+build_boringssl() {
+
+  cat <<EOF
+  #############################
+  ###### build boringssl ######
+  #############################
+EOF
+
+  # build boring ssl static lib from submodule:
+  cd "$SCRIPTDIR/boringssl/google-boringssl/"
+  rm -rf build && mkdir build
+  #-fPIC is redundant on macos, but required for building on linux
+  cmake -B build -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_BUILD_TYPE=Release
+  make -C build
+
+  # build boringssl_jni shared lib linked against boringssl static lib
+  cd "$SCRIPTDIR/boringssl/boringssl_jni/"
+  make clean && make
+
+  # copy the result into OSARCH specific directories, for CI
+  mkdir -p "$SCRIPTDIR/boringssl/build/${OSARCH}/lib"
+  cp build/libboringssl_precompiles.* "$SCRIPTDIR/boringssl/build/${OSARCH}/lib"
+}
+
 
 build_blake2bf
 build_secp256k1
-build_altbn128
 build_arithmetic
-build_bls12_381
 build_ipa_multipoint
 build_secp256r1
 build_gnark
-
+build_constantine
+build_boringssl
 
 build_jars
 exit

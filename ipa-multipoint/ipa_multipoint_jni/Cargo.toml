@@ -1,5 +1,5 @@
 #
-# Copyright Besu Contributors
+# Copyright contributors to Besu.
 #
 # Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
 # the License. You may obtain a copy of the License at
@@ -22,19 +22,16 @@ repository = "https://github.com/hyperledger/besu-native"
 edition = "2018"
 
 [dependencies]
-verkle-spec = { git = "https://github.com/crate-crypto/rust-verkle", branch = "master" }
-verkle-trie = { git = "https://github.com/crate-crypto/rust-verkle", branch = "master" }
-ipa-multipoint = { git = "https://github.com/crate-crypto/ipa_multipoint", branch = "banderwagon_migration" }
-banderwagon = { git = "https://github.com/crate-crypto/banderwagon" }
-bandersnatch = "0.1.1"
-ark-ff = { version = "^0.3.0", default-features = false }
-ark-ec = { version = "^0.3.0", default-features = false }
-ark-serialize = { version = "^0.3.0", default-features = false }
-ark-std = { version = "^0.3.0", default-features = false }
-jni = { version = "0.19.0", features = ["invocation"] } # We use invocation in tests.
+ffi_interface = { git = "https://github.com/crate-crypto/rust-verkle", rev = "442174edeb69f7827047132306d302345df12b83"}
+verkle-trie = { git = "https://github.com/crate-crypto/rust-verkle", rev = "442174edeb69f7827047132306d302345df12b83"}
+ipa-multipoint = { git = "https://github.com/crate-crypto/rust-verkle", rev = "442174edeb69f7827047132306d302345df12b83"}
+banderwagon = { git = "https://github.com/crate-crypto/rust-verkle", rev = "442174edeb69f7827047132306d302345df12b83"}
+jni = { version = "0.19.0", features = [
+    "invocation",
+] } # We use invocation in tests.
 hex = "0.4.3"
 num-bigint = "0.4.4"
-
+once_cell = "1.19.0"
 
 [lib]
 name = "ipa_multipoint_jni"

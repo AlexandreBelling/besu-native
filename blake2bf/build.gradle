@@ -16,10 +16,11 @@
 plugins {
   id 'java-library'
   id 'maven-publish'
-  id 'com.jfrog.artifactory' version '4.20.0'
+  id 'com.jfrog.artifactory' version '5.2.3'
 }
 
 dependencies {
+  implementation project(':common')
   implementation 'net.java.dev.jna:jna:5.12.1'
   testImplementation 'junit:junit:4.13.2'
   testImplementation 'org.assertj:assertj-core:3.22.0'
@@ -27,27 +28,27 @@ dependencies {
 
 task macAarch64LibCopy(type: Copy) {
   from 'build/darwin-aarch64/lib/libblake2bf.dylib'
-  into 'build/resources/main/darwin-aarch64'
+  into 'build/resources/main/lib/aarch64'
 }
 
 processResources.dependsOn macAarch64LibCopy
 
 task macLibCopy(type: Copy) {
   from 'build/darwin-x86-64/lib/libblake2bf.dylib'
-  into 'build/resources/main/darwin-x86-64'
+  into 'build/resources/main/lib/x86-64'
 }
 
 processResources.dependsOn macLibCopy
 
 task linuxLibCopy(type: Copy) {
   from 'build/linux-gnu-x86_64/lib/libblake2bf.so'
-  into 'build/resources/main/linux-x86-64'
+  into 'build/resources/main/lib/x86-64'
 }
 processResources.dependsOn linuxLibCopy
 
 task linuxArm64LibCopy(type: Copy) {
   from 'build/linux-gnu-aarch64/lib/libblake2bf.so'
-  into 'build/resources/main/linux-aarch64'
+  into 'build/resources/main/lib/aarch64'
 }
 processResources.dependsOn linuxArm64LibCopy
 
@@ -67,13 +68,13 @@ jar {
 
 task sourcesJar(type: Jar, dependsOn: classes) {
   archiveBaseName = 'besu-native-blake2bf'
-  classifier = 'sources'
+  archiveClassifier = 'sources'
   from sourceSets.main.allSource
 }
 
 task javadocJar(type: Jar, dependsOn: javadoc) {
   archiveBaseName = 'besu-native-blake2bf'
-  classifier = 'javadoc'
+  archiveClassifier = 'javadoc'
   from javadoc.destinationDir
 }
 

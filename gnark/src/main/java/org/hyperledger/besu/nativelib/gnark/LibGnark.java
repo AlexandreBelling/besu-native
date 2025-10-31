@@ -1,5 +1,5 @@
 /*
- * Copyright Besu Contributors
+ * Copyright contributors to Besu.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -15,7 +15,7 @@
  */
 package org.hyperledger.besu.nativelib.gnark;
 
-import com.sun.jna.Native;
+import org.hyperledger.besu.nativelib.common.BesuNativeLibraryLoader;
 
 /**
  * Java interface to gnark
@@ -28,7 +28,7 @@ public class LibGnark {
     static {
         boolean enabled;
         try {
-            Native.register(LibGnark.class, "gnark_jni");
+            BesuNativeLibraryLoader.registerJNA(LibGnark.class, "gnark_jni");
             enabled = true;
         } catch (final Throwable t) {
             t.printStackTrace();
@@ -37,7 +37,13 @@ public class LibGnark {
         ENABLED = enabled;
     }
 
-    public static native int computeMimc(
+    public static native int computeMimcBn254(
             byte[] i, int i_len, byte[] o);
+
+    public static native int computeMimcBls12377(
+        byte[] i, int i_len, byte[] o);
+
+    public static native int computePoseidon2Koalabear(
+        byte[] i, int i_len, byte[] o);
 
 }

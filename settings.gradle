@@ -1,5 +1,5 @@
 /*
- * Copyright ConsenSys AG.
+ * Copyright Hyperledger Besu contributors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
@@ -14,11 +14,12 @@
  */
 
 rootProject.name='besu-native'
-include 'altbn128'
+include 'common'
 include 'arithmetic'
 include 'blake2bf'
-include 'bls12-381'
 include 'ipa-multipoint'
 include 'secp256k1'
 include 'secp256r1'
 include 'gnark'
+include 'constantine'
+include 'boringssl'

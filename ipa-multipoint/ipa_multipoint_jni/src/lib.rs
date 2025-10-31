@@ -1,6 +1,4 @@
-/*
- * Copyright Besu Contributors
- *
+/* Copyright contributors to Besu.
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
  *
@@ -12,163 +10,380 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
-use ark_ff::PrimeField;
-use banderwagon::{Fr, multi_scalar_mul};
-use ipa_multipoint::crs::CRS;
-use verkle_spec::*;
-// use crate::{vergroup_to_field};
-use ark_serialize::CanonicalSerialize;
-use verkle_trie::*;
+mod parsers;
+use parsers::{parse_scalars, parse_indices, parse_commitment, parse_commitments};
 
-// use group_to_field;
+mod utils;
+use utils::{convert_to_btree_set, get_optional_array, get_array, convert_byte_array_to_fixed_array,jobjectarray_to_vec};
+use utils::{byte_to_depth_extension_present,bytes32_to_scalar,bytes32_to_element};
 
-use jni::JNIEnv;
 use jni::objects::JClass;
-use jni::sys::jbyteArray;
+use jni::sys::{jbyteArray, jobjectArray};
+use jni::JNIEnv;
+use once_cell::sync::Lazy;
 
+use std::convert::TryInto;
+use ipa_multipoint::multiproof::{MultiPointProof};
+use ipa_multipoint::ipa::{IPAProof};
+use verkle_trie::proof::{ExtPresent,VerificationHint, VerkleProof};
 
-// Copied from rust-verkle: https://github.com/crate-crypto/rust-verkle/blob/581200474327f5d12629ac2e1691eff91f944cec/verkle-trie/src/constants.rs#L12
-const PEDERSEN_SEED: &'static [u8] = b"eth_verkle_oct_2021";
+// TODO: Use a pointer here instead. This is only being used so that the interface does not get changed.
+// TODO: and bindings do not need to be modified.
+pub static CONFIG: Lazy<ffi_interface::Context> = Lazy::new(ffi_interface::Context::default);
 
-/// Pedersen hash receives an address and a trie index and returns a hash calculated this way:
-/// H(constant || address_low || address_high || trie_index_low || trie_index_high)
-/// where constant = 2 + 256*64
-/// address_low = lower 16 bytes of the address interpreted as a little endian integer
-/// address_high = higher 16 bytes of the address interpreted as a little endian integer
-/// trie_index_low = lower 16 bytes of the trie index
-/// trie_index_high = higher 16 bytes of the trie index
-/// The result is a 256 bit hash
-/// This is ported from rust-verkle/verkle-specs
-#[no_mangle]
-pub extern "system" fn Java_org_hyperledger_besu_nativelib_ipamultipoint_LibIpaMultipoint_pedersenHash(
-    env: JNIEnv,
-    _class: JClass,
-    input: jbyteArray,
-) -> jbyteArray {
-
-    let input = env.convert_byte_array(input).unwrap();
-
-    let mut address32 = [0u8; 32];
-
-    address32.copy_from_slice(&input[0..32]);
-
-    let mut trie_index= [0u8; 32];
-
-    trie_index.copy_from_slice(&input[32..64]);
-    trie_index.reverse(); // reverse for little endian per specs
-
-    let base_hash = hash_addr_int(&address32, &trie_index);
-
-    let result = base_hash.as_fixed_bytes();
-    let output = env.byte_array_from_slice(result).unwrap();
-    output
-}
-
-// Helper function to hash an address and an integer taken from rust-verkle/verkle-specs.
-pub(crate) fn hash_addr_int(addr: &[u8; 32], integer: &[u8; 32]) -> H256 {
-
-    let address_bytes = addr;
-
-    let integer_bytes = integer;
-    let mut hash_input = [0u8; 64];
-    let (first_half, second_half) = hash_input.split_at_mut(32);
-
-    // Copy address and index into slice, then hash it
-    first_half.copy_from_slice(address_bytes);
-    second_half.copy_from_slice(integer_bytes);
-
-    hash64(hash_input)
-}
 
 /// Commit receives a list of 32 byte scalars and returns a 32 byte scalar
 /// Scalar is actually the map_to_field(commitment) because we want to reuse the commitment in parent node.
 /// This is ported from rust-verkle.
 #[no_mangle]
-pub extern "system" fn Java_org_hyperledger_besu_nativelib_ipamultipoint_LibIpaMultipoint_commit(env: JNIEnv,
-                                                                                                 _class: JClass<'_>,
-                                                                                                 input: jbyteArray)
-                                                                                                 -> jbyteArray {
-    // Input should be a multiple of 32-be-bytes.
-    let inp = env.convert_byte_array(input).expect("Cannot convert jbyteArray to rust array");
-    let len = inp.len();
-    if len % 32 != 0 {
-        env.throw_new("java/lang/IllegalArgumentException", "Invalid input length. Should be a multiple of 32-bytes.")
-           .expect("Failed to throw exception");
-        return std::ptr::null_mut(); // Return null pointer to indicate an error
-    }    
-    let n_scalars = len / 32;
-    if n_scalars > 256 {
-        env.throw_new("java/lang/IllegalArgumentException", "Invalid input length. Should be at most 256 elements of 32-bytes.")
-           .expect("Failed to throw exception");
-        return std::ptr::null_mut(); // Return null pointer to indicate an error
-    }    
-
-    // Each 32-be-bytes are interpreted as field elements.
-    let mut scalars: Vec<Fr> = Vec::with_capacity(n_scalars);
-    for b in inp.chunks(32) {
-        scalars.push(Fr::from_be_bytes_mod_order(b));
-    }
-    
-    // Committing all values at once.
-    let bases = CRS::new(n_scalars, PEDERSEN_SEED);
-    let commit = multi_scalar_mul(&bases.G, &scalars);
-
-    // Serializing via x/y in projective coordinates, to int and to scalars.
-    let scalar = group_to_field(&commit);
-    let mut scalar_bytes = [0u8; 32];
-    scalar.serialize(&mut scalar_bytes[..]).expect("could not serialise Fr into a 32 byte array");
-    scalar_bytes.reverse();
-
-    return env.byte_array_from_slice(&scalar_bytes).expect("Couldn't convert to byte array");
+pub extern "system" fn Java_org_hyperledger_besu_nativelib_ipamultipoint_LibIpaMultipoint_commit(
+    env: JNIEnv, _class: JClass<'_>, values: jbyteArray,
+) -> jbyteArray {
+    let input = match parse_scalars(&env, values) {
+        Ok(v) => v,
+        Err(e) => {
+            env.throw_new("java/lang/IllegalArgumentException", e) 
+               .expect("Failed to throw exception for commit inputs.");
+            return std::ptr::null_mut();
+        }
+    };
+    let commitment = match ffi_interface::commit_to_scalars(&CONFIG, &input) {
+        Ok(v) => v,
+        Err(e) => {
+           let error_message = format!("Could not commit to scalars: {:?}", e);
+           env.throw_new("java/lang/IllegalArgumentException", &error_message)
+               .expect("Failed to throw exception for commit inputs.");
+            return std::ptr::null_mut();
+        }
+    };
+    let result = match env.byte_array_from_slice(&commitment) {
+        Ok(v) => v,
+        Err(e) => {
+            let error_message = format!("Couldn't return commitment.: {:?}", e);
+            env.throw_new("java/lang/IllegalArgumentException", &error_message)
+            .expect("Couldn't convert to byte array");
+            return std::ptr::null_mut();
+        }
+    };
+    result
 }
 
-
-/// Commit_root receives a list of 32 byte scalars and returns a 32 byte commitment.to_bytes()
-/// This is ported from rust-verkle.
 #[no_mangle]
-pub extern "system" fn Java_org_hyperledger_besu_nativelib_ipamultipoint_LibIpaMultipoint_commit_root(env: JNIEnv,
-                                                                                                 _class: JClass<'_>,
-                                                                                                 input: jbyteArray)
-                                                                                                 -> jbyteArray {
-    // Input should be a multiple of 32-be-bytes.
-    let inp = env.convert_byte_array(input).expect("Cannot convert jbyteArray to rust array");
-    let len = inp.len();
-    if len % 32 != 0 {
-        env.throw_new("java/lang/IllegalArgumentException", "Invalid input length. Should be a multiple of 32-bytes.")
-           .expect("Failed to throw exception");
-        return std::ptr::null_mut(); // Return null pointer to indicate an error
-    }    
-    let n_scalars = len / 32;
-    if n_scalars > 256 {
-        env.throw_new("java/lang/IllegalArgumentException", "Invalid input length. Should be at most 256 elements of 32-bytes.")
-           .expect("Failed to throw exception");
-        return std::ptr::null_mut(); // Return null pointer to indicate an error
-    }    
+pub extern "system" fn Java_org_hyperledger_besu_nativelib_ipamultipoint_LibIpaMultipoint_commitAsCompressed(
+    env: JNIEnv, _class: JClass<'_>, values: jbyteArray
+) -> jbyteArray {
+    let input = match parse_scalars(&env, values) {
+        Ok(v) => v,
+        Err(e) => {
+            env.throw_new("java/lang/IllegalArgumentException", e) 
+               .expect("Failed to throw exception for commit inputs.");
+            return std::ptr::null_mut();
+        }
+    };
+    let commitment = match ffi_interface::commit_to_scalars(&CONFIG, &input) {
+        Ok(v) => v,
+        Err(e) => {
+            env.throw_new("java/lang/IllegalArgumentException", format!("{e:?}"))
+               .expect("Failed to throw exception for commit inputs.");
+            return std::ptr::null_mut();
+        }
+    };
+    let compressed = ffi_interface::serialize_commitment(commitment);
+    let result = match env.byte_array_from_slice(&compressed) {
+        Ok(v) => v,
+        Err(e) => {
+            let error_message = format!("Couldn't return commitment: {:?}", e);
+            env.throw_new("java/lang/IllegalArgumentException", &error_message)
+            .expect("Couldn't convert to byte array");
+            return std::ptr::null_mut();
+        }
+    };
+    result
+}
 
-    // Each 32-be-bytes are interpreted as field elements.
-    let mut scalars: Vec<Fr> = Vec::with_capacity(n_scalars);
-    for b in inp.chunks(32) {
-        scalars.push(Fr::from_be_bytes_mod_order(b));
-    }
-    
-    // Committing all values at once.
-    let bases = CRS::new(n_scalars, PEDERSEN_SEED);
-    let commit = multi_scalar_mul(&bases.G, &scalars);
+#[no_mangle]
+pub extern "system" fn Java_org_hyperledger_besu_nativelib_ipamultipoint_LibIpaMultipoint_updateSparse(
+    env: JNIEnv, _class: JClass<'_>, commitment: jbyteArray, indices: jbyteArray, old_values: jbyteArray, new_values: jbyteArray
+) -> jbyteArray {
+    let commitment = match parse_commitment(&env, commitment) {
+        Ok(v) => v,
+        Err(e) => {
+            env.throw_new("java/lang/IllegalArgumentException", e) 
+               .expect("Failed to throw exception for updateSparse commitment input.");
+            return std::ptr::null_mut();
+        }
+    };
+    let pos = match parse_indices(&env, indices) {
+        Ok(v) => v,
+        Err(e) => {
+            env.throw_new("java/lang/IllegalArgumentException", e) 
+               .expect("Failed to throw exception for commit inputs.");
+            return std::ptr::null_mut();
+        }
+    };
+    let old = match parse_scalars(&env, old_values) {
+        Ok(v) => v,
+        Err(e) => {
+            env.throw_new("java/lang/IllegalArgumentException", e) 
+               .expect("Failed to throw exception for commit inputs.");
+            return std::ptr::null_mut();
+        }
+    };
+    let old: Vec<ffi_interface::ScalarBytes> = old.chunks_exact(32).map(|x| {
+        let mut array = [0u8; 32];
+        array.copy_from_slice(x);
+        array
+    }).collect();
+    let new = match parse_scalars(&env, new_values) {
+        Ok(v) => v,
+        Err(e) => {
+            env.throw_new("java/lang/IllegalArgumentException", e) 
+               .expect("Failed to throw exception for commit inputs.");
+            return std::ptr::null_mut();
+        }
+    };
+    let new: Vec<ffi_interface::ScalarBytes> = new.chunks_exact(32).map(|x| {
+        let mut array = [0u8; 32];
+        array.copy_from_slice(x);
+        array
+    }).collect();
+    let commitment = match ffi_interface::update_commitment_sparse(&CONFIG, commitment, pos, old, new) {
+        Ok(v) => v,
+        Err(e) => {
+            env.throw_new("java/lang/IllegalArgumentException", format!("{e:?}"))
+               .expect("Failed to throw exception for commit inputs.");
+            return std::ptr::null_mut();
+        }
+    };
+    let result = match env.byte_array_from_slice(&commitment) {
+        Ok(v) => v,
+        Err(e) => {
+            let error_message = format!("Couldn't return commitment: {:?}", e);
+            env.throw_new("java/lang/IllegalArgumentException", &error_message)
+               .expect("Couldn't convert to byte array");
+            return std::ptr::null_mut();
+        }
+    };
+    result
+}
 
-    // Serializing using first affine coordinate
-    let commit_bytes = commit.to_bytes();
+#[no_mangle]
+pub extern "system" fn Java_org_hyperledger_besu_nativelib_ipamultipoint_LibIpaMultipoint_compress(
+    env: JNIEnv, _class: JClass<'_>, commitment: jbyteArray
+) -> jbyteArray {
 
-    return env.byte_array_from_slice(&commit_bytes).expect("Couldn't convert to byte array");
+    let commitment = match parse_commitment(&env, commitment) {
+        Ok(v) => v,
+        Err(e) => {
+            env.throw_new("java/lang/IllegalArgumentException", e)
+               .expect("Failed to throw exception for commit inputs.");
+            return std::ptr::null_mut();
+        }
+    };
+    let compressed = ffi_interface::serialize_commitment(commitment);
+    let result = match env.byte_array_from_slice(&compressed) {
+        Ok(s) => s,
+        Err(e) => {
+            let error_message = format!("Invalid commitment output. Couldn't convert to byte array: {:?}", e);
+            env.throw_new("java/lang/IllegalArgumentException", &error_message)
+            .expect("Couldn't convert to byte array");
+            return std::ptr::null_mut();
+        }
+    };
+    result
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_hyperledger_besu_nativelib_ipamultipoint_LibIpaMultipoint_compressMany(
+    env: JNIEnv, _class: JClass<'_>, commitments: jbyteArray
+) -> jbyteArray {
+
+    let commitments = match parse_commitments(&env, commitments) {
+        Ok(v) => v,
+        Err(e) => {
+            env.throw_new("java/lang/IllegalArgumentException", e)
+               .expect("Failed to throw exception for commit inputs.");
+            return std::ptr::null_mut();
+        }
+    };
+    let compressed: Vec<u8> = commitments.chunks_exact(64).flat_map(|x| ffi_interface::serialize_commitment(x.try_into().unwrap())).collect();
+    let result = match env.byte_array_from_slice(&compressed) {
+        Ok(s) => s,
+        Err(e) => {
+            let error_message = format!("Invalid commitment output. Couldn't convert to byte array: {:?}", e);
+            env.throw_new("java/lang/IllegalArgumentException", &error_message)
+            .expect("Couldn't convert to byte array");
+            return std::ptr::null_mut();
+        }
+    };
+   result
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_hyperledger_besu_nativelib_ipamultipoint_LibIpaMultipoint_hash(
+    env: JNIEnv, _class: JClass<'_>, commitment: jbyteArray
+) -> jbyteArray {
+    let commitment = match parse_commitment(&env, commitment) {
+        Ok(v) => v,
+        Err(e) => {
+            env.throw_new("java/lang/IllegalArgumentException", e)
+               .expect("Failed to throw exception for commit inputs.");
+            return std::ptr::null_mut();
+        }
+    };
+    let hash = ffi_interface::hash_commitment(commitment);
+    let result = match env.byte_array_from_slice(&hash) {
+        Ok(s) => s,
+        Err(_e) => {
+            env.throw_new(
+                "java/lang/IllegalArgumentException",
+                "Invalid commitment output. Couldn't convert to byte array.")
+            .expect("Couldn't convert to byte array");
+            return std::ptr::null_mut();
+        }
+    };
+    result
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_hyperledger_besu_nativelib_ipamultipoint_LibIpaMultipoint_hashMany(
+    env: JNIEnv, _class: JClass<'_>, commitments: jbyteArray
+) -> jbyteArray {
+    let input = match parse_commitments(&env, commitments) {
+        Ok(v) => v,
+        Err(e) => {
+            env.throw_new("java/lang/IllegalArgumentException", e)
+               .expect("Failed to throw exception for commit inputs.");
+            return std::ptr::null_mut();
+        }
+    };
+    let input: Vec<ffi_interface::CommitmentBytes> = input.chunks_exact(64).map(|x| {
+        let mut array = [0u8; 64];
+        array.copy_from_slice(x);
+        array
+    }).collect();
+    let hashes = ffi_interface::hash_commitments(&input);
+    let hashes: Vec<u8> = hashes.iter().flat_map(|x| x.iter().copied()).collect();
+    let result = match env.byte_array_from_slice(&hashes) {
+        Ok(s) => s,
+        Err(e) => {
+            let error_message = format!("Invalid scalars output. Couldn't convert to byte array: {:?}", e);
+            env.throw_new("java/lang/IllegalArgumentException", &error_message)
+            .expect("Couldn't convert to byte array");
+            return std::ptr::null_mut();
+        }
+    };
+    result
+
 }
 
 
-// Note: This is a 2 to 1 map, but the two preimages are identified to be the same
-// TODO: Create a document showing that this poses no problems
-pub(crate)fn group_to_field(point: &Element) -> Fr {
-    let base_field = point.map_to_field();
-    let mut bytes = [0u8; 32];
-    base_field
-        .serialize(&mut bytes[..])
-        .expect("could not serialise point into a 32 byte array");
-    Fr::from_le_bytes_mod_order(&bytes)
+#[no_mangle]
+pub extern "system" fn Java_org_hyperledger_besu_nativelib_ipamultipoint_LibIpaMultipoint_verifyPreStateRoot(
+    env: JNIEnv, _class: JClass<'_>, stems_keys: jobjectArray,
+                                     current_values: jobjectArray ,
+                                     commitments_by_path : jobjectArray,
+                                     cl : jobjectArray,
+                                     cr : jobjectArray,
+                                     other_stems : jobjectArray,
+                                     d : jbyteArray,
+                                     depths_extension_present_stems : jbyteArray,
+                                     final_evaluation : jbyteArray,
+                                     prestate_root : jbyteArray
+) -> bool {
+
+    let num_keys = match env.get_array_length(stems_keys) {
+        Ok(len) => len,
+        Err(_) => return false,
+    };
+
+    let mut formatted_keys: Vec<[u8; 32]> = Vec::new();
+    let mut formatted_current_values : Vec<Option<[u8; 32]>> = Vec::new();
+
+    for i in 0..num_keys {
+        match get_array(&env, stems_keys, i) {
+            Some(key) => formatted_keys.push(key),
+            None => return false,
+        }
+        match get_optional_array(&env, current_values, i) {
+            Some(value) => formatted_current_values.push(value),
+            None => return false,
+        }
+    }
+
+    let formatted_commitments = match jobjectarray_to_vec(&env, commitments_by_path, |b| bytes32_to_element(b)) {
+            Some(vec) => vec,
+            None => return false,
+    };
+
+    let formatted_cl = match jobjectarray_to_vec(&env, cl, |b| bytes32_to_element(b)) {
+        Some(vec) => vec,
+        None => return false,
+    };
+
+    let formatted_cr = match jobjectarray_to_vec(&env, cr, |b| bytes32_to_element(b)) {
+        Some(vec) => vec,
+        None => return false,
+    };
+
+    let formatted_d = match convert_byte_array_to_fixed_array(&env, d) {
+            Some(arr) => arr,
+            None => return false,
+    };
+
+    let formatted_final_evaluation = match convert_byte_array_to_fixed_array(&env, final_evaluation) {
+        Some(arr) => arr,
+        None => return false,
+    };
+
+    let scalar_final_evaluation = match bytes32_to_scalar(formatted_final_evaluation) {
+            Some(scalar) => scalar,
+            None => return false,
+    };
+
+    let g_x_comm = match bytes32_to_element(formatted_d) {
+        Some(element) => element,
+        None => return false,
+    };
+
+    let proof = MultiPointProof {
+        open_proof: IPAProof {
+            L_vec: formatted_cl,
+            R_vec: formatted_cr,
+            a: scalar_final_evaluation,
+        },
+        g_x_comm: g_x_comm,
+    };
+
+    let depths_bytes = match env.convert_byte_array(depths_extension_present_stems) {
+            Ok(bytes) => bytes,
+            Err(_) => return false,
+    };
+    let (formatted_extension_present, depths): (Vec<ExtPresent>, Vec<u8>) = depths_bytes
+        .iter()
+        .map(|&byte| byte_to_depth_extension_present(byte as u8))
+        .unzip();
+
+    let formatted_other_stems = match convert_to_btree_set(&env, other_stems) {
+        Some(set) => set,
+        None => return false,
+    };
+
+    let verkle_proof = VerkleProof {
+        verification_hint: VerificationHint {
+            depths: depths,
+            extension_present: formatted_extension_present,
+            diff_stem_no_proof: formatted_other_stems,
+        },
+        comms_sorted: formatted_commitments,
+        proof,
+    };
+
+    let prestate_root_bytes = match convert_byte_array_to_fixed_array(&env, prestate_root).and_then(|bytes| bytes32_to_element(bytes)) {
+        Some(element) => element,
+        None => return false,
+    };
+
+    let (bool,_update_hint) = verkle_proof.check(formatted_keys, formatted_current_values, prestate_root_bytes);
+    bool
 }

@@ -1,3 +1,18 @@
+/*
+ * Copyright contributors to Besu.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+ * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations under the License.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ */
 package org.hyperledger.besu.nativelib.secp256r1;
 
 import org.hyperledger.besu.nativelib.secp256r1.besuNativeEC.BesuNativeEC;
@@ -14,7 +29,7 @@ public class LibSECP256R1 {
 
     public byte[] keyRecovery(final byte[] dataHash, final byte[] signatureR, final byte[] signatureS,
                               final int signatureV) throws IllegalArgumentException {
-        final KeyRecoveryResultByValue result = BesuNativeEC.INSTANCE.p256_key_recovery(
+        final KeyRecoveryResultByValue result = BesuNativeEC.p256_key_recovery(
                 dataHash,
                 dataHash.length,
                 convertToNativeRepresentation(signatureR),
@@ -32,7 +47,7 @@ public class LibSECP256R1 {
     }
 
     public Signature sign(byte[] dataHash, byte[] privateKey, byte[] publicKey) throws IllegalArgumentException {
-        final SignResultByValue result = BesuNativeEC.INSTANCE.p256_sign(
+        final SignResultByValue result = BesuNativeEC.p256_sign(
                 dataHash, dataHash.length, privateKey, publicKey);
 
         String errorMessage = (new String(result.error_message)).trim();
@@ -49,13 +64,25 @@ public class LibSECP256R1 {
     }
 
     public boolean verify(final byte[] dataHash, final byte[] signatureR, final byte[] signatureS,
-                          final byte[] publicKey) throws IllegalArgumentException {
-        final VerifyResultByValue result = BesuNativeEC.INSTANCE.p256_verify(
+        final byte[] publicKey) throws IllegalArgumentException {
+        return verify(dataHash, signatureR, signatureS, publicKey, false);
+    }
+
+    public boolean verify(final byte[] dataHash, final byte[] signatureR, final byte[] signatureS,
+        final byte[] publicKey, final boolean allowMalleable) throws IllegalArgumentException {
+        VerifyResultByValue result;
+        if (!allowMalleable) {
+            result = BesuNativeEC.p256_verify(dataHash, dataHash.length,
+                convertToNativeRepresentation(signatureR),
+                convertToNativeRepresentation(signatureS), publicKey);
+        } else {
+            result = BesuNativeEC.p256_verify_malleable_signature(
                 dataHash,
                 dataHash.length,
                 convertToNativeRepresentation(signatureR),
                 convertToNativeRepresentation(signatureS),
                 publicKey);
+        }
 
         if (result.verified < 0) {
             String errorMessage = (new String(result.error_message)).trim();
